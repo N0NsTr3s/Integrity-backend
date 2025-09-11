@@ -21,6 +21,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://n0nstr3s.github.io",  # Your GitHub Pages
+        "https://integrity-backend.onrender.com",
         "http://localhost:3000",
         "http://localhost:8000", 
         "http://127.0.0.1:*",
@@ -108,12 +109,34 @@ def init_db():
 
 init_db()
 
+@app.get('/health')
+async def health_check():
+    """Health check endpoint for deployment verification"""
+    return {
+        "status": "healthy",
+        "service": "Script Integrity SaaS", 
+        "timestamp": datetime.utcnow().isoformat(),
+        "database": "connected"
+    }
+
+# Fix the root route to not depend on static files
 @app.get('/')
 async def root():
-    index_file = static_path / 'index.html'
-    if index_file.exists():
-        return FileResponse(str(index_file))
-    return {"status": "ok", "service": "Script Integrity SaaS"}
+    """Root endpoint - return API information instead of trying to serve static files"""
+    return {
+        "status": "ok", 
+        "service": "Script Integrity SaaS",
+        "version": "1.0.0",
+        "health": "/health",
+        "endpoints": {
+            "push_manifest": "POST /tenant/{tenant_id}/manifest/push",
+            "get_manifest": "GET /tenant/{tenant_id}/manifest", 
+            "report": "POST /tenant/{tenant_id}/report",
+            "dashboard": "GET /dashboard/{tenant_id}",
+            "ip_correlation": "GET /ip-correlation/{tenant_id}",
+            "injections": "GET /tenant/{tenant_id}/injections"
+        }
+    }
 
 @app.get('/index.html')
 async def index_html():
@@ -923,3 +946,9 @@ async def manifest_compare(tenant_id: str, create_report: bool = False):
             logger.error(f"Database error when creating auto-report: {e}")
 
     return {'tenant': tenant_id, 'results': results, 'report_created': report_created, 'report_id': report_id}
+
+# Add production server configuration for Render
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 5500))
+    uvicorn.run(app, host="0.0.0.0", port=port)
