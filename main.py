@@ -22,6 +22,7 @@ app.add_middleware(
     allow_origins=[
         "https://n0nstr3s.github.io",  # Your GitHub Pages
         "https://integrity-backend-yrq3.onrender.com",
+        "https://cdn.jsdelivr.net/gh/n0nstr3s/Integrity@main/integrity.js",
         "https://github.com/N0NsTr3s/",
         "http://localhost:3000",
         "http://localhost:8000", 
@@ -953,5 +954,6 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 5500))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
 
