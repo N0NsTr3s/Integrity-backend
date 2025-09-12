@@ -101,14 +101,51 @@ async def report_issue(tenant_id: str, request: Request):
             'browser_version': browser_info.get('version'),
             'platform': browser_info.get('platform')
         }
-    report_type = report_payload.get('type','file_integrity') if isinstance(report_payload, dict) else 'unknown'
-
+    # Extract report_type from payload or use a default
+    report_type = report_payload.get('type', 'unknown')
+    
+    # Extract findings_count if available
+    findings = report_payload.get('findings', [])
+    findings_count = len(findings) if isinstance(findings, list) else 0
+    
+    # Extract injections_count if available
+    injections = report_payload.get('injections', [])
+    injections_count = len(injections) if isinstance(injections, list) else 0
+    
+    # Determine risk level based on findings
+    risk_level = 'low'
+    if findings_count > 10 or injections_count > 5:
+        risk_level = 'critical'
+    elif findings_count > 5 or injections_count > 2:
+        risk_level = 'high'
+    elif findings_count > 0 or injections_count > 0:
+        risk_level = 'medium'
+        
     # simplified storage
     try:
         db_path = str(Path(__file__).parent.parent / 'data' / 'integ.db')
         with sqlite3.connect(db_path) as conn:
             c = conn.cursor()
-            c.execute("INSERT INTO reports (tenant, payload) VALUES (?, ?)", (tenant_id, json.dumps(report_payload)))
+            c.execute("""
+                INSERT INTO reports (
+                    tenant, report_type, page_url, client_ip, browser, 
+                    browser_version, platform, user_agent, findings_count, 
+                    injections_count, risk_level, payload
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                tenant_id, 
+                report_type,
+                report_payload.get('page_info', {}).get('url'), # pyright: ignore[reportAttributeAccessIssue]
+                client_ip,
+                browser_info.get('name'),
+                browser_info.get('version'),
+                browser_info.get('os'),
+                ua,
+                findings_count,
+                injections_count,
+                risk_level,
+                json.dumps(report_payload)
+            ))
             conn.commit()
             report_id = c.lastrowid
     except sqlite3.Error as e:

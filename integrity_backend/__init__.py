@@ -14,6 +14,10 @@ from .routes_dashboard import router as dashboard_router  # Add this line
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Initialize database before creating app
+init_db()
+
+# Then create the FastAPI app
 app = FastAPI(title='Script Integrity SaaS')
 
 # configure CORS and static mounting
@@ -42,9 +46,6 @@ app.include_router(reports_router)
 app.include_router(admin_router)
 app.include_router(auth_router)
 app.include_router(dashboard_router)  # Add this line
-
-# Initialize DB
-init_db()
 
 # expose static_path for compatibility
 __all__ = ['app']
