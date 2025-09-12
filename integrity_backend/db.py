@@ -13,12 +13,44 @@ def ensure_reports_columns():
         with sqlite3.connect(DB) as conn:
             c = conn.cursor()
             
-            # Get existing columns
+            # Check if reports table exists at all
+            c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='reports'")
+            if not c.fetchone():
+                # Create the reports table with all necessary columns
+                c.execute("""
+                CREATE TABLE reports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tenant TEXT NOT NULL,
+                    report_type TEXT NOT NULL DEFAULT 'unknown',
+                    page_url TEXT,
+                    client_ip TEXT,
+                    browser TEXT,
+                    browser_version TEXT,
+                    platform TEXT,
+                    user_agent TEXT,
+                    findings_count INTEGER DEFAULT 0,
+                    injections_count INTEGER DEFAULT 0,
+                    risk_level TEXT DEFAULT 'low',
+                    at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    payload TEXT
+                )
+                """)
+                
+                # Add indexes for better performance
+                c.execute("""CREATE INDEX idx_reports_tenant ON reports(tenant)""")
+                c.execute("""CREATE INDEX idx_reports_type ON reports(report_type)""")
+                c.execute("""CREATE INDEX idx_reports_timestamp ON reports(at)""")
+                
+                logger.info("Created reports table with complete schema")
+                return
+            
+            # If table exists, get current columns
             c.execute("PRAGMA table_info(reports)")
             existing_columns = {row[1] for row in c.fetchall()}
             
             # Add missing columns if needed
             needed_columns = {
+                'report_type': 'TEXT NOT NULL DEFAULT "unknown"',
                 'findings_count': 'INTEGER DEFAULT 0',
                 'injections_count': 'INTEGER DEFAULT 0', 
                 'risk_level': 'TEXT DEFAULT "low"',
