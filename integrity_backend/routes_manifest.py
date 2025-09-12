@@ -2,6 +2,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 import sqlite3, json, logging
 from pathlib import Path
+import jwt
+from .routes_reports import verify_auth_for_tenant  # Reuse the same auth function
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -25,7 +27,11 @@ async def push_manifest(tenant_id: str, payload: dict):
 
 
 @router.get('/tenant/{tenant_id}/manifest')
-async def get_manifest(tenant_id: str):
+async def get_manifest(tenant_id: str, request: Request):
+    # Make token authentication mandatory
+    if not verify_auth_for_tenant(request, tenant_id):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    
     try:
         db_path = str(Path(__file__).parent.parent / 'data' / 'integ.db')
         with sqlite3.connect(db_path) as conn:
