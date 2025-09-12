@@ -74,19 +74,11 @@ def verify_auth_for_tenant(request: Request, tenant_id: str) -> bool:
 
 @router.post('/tenant/{tenant_id}/report')
 async def report_issue(tenant_id: str, request: Request):
-    # Check authentication first
+    # Use only one authentication check - the comprehensive one
     if not verify_auth_for_tenant(request, tenant_id):
         raise HTTPException(status_code=401, detail="unauthorized")
         
-    tenant_rec = get_tenant_record(tenant_id)
-    provided_key = (request.headers.get('x-api-key') or request.headers.get('authorization') or '').replace('Bearer ', '').strip()
-    server_key_ok = False
-    if tenant_rec and tenant_rec.get('api_key'):
-        if provided_key and provided_key == tenant_rec.get('api_key'):
-            server_key_ok = True
-    if not server_key_ok:
-        if not origin_allowed_for_tenant(request, tenant_id):
-            raise HTTPException(status_code=401, detail='unauthorized')
+    # Continue with report processing...
     try:
         report_payload = await request.json()
     except Exception:
@@ -95,6 +87,7 @@ async def report_issue(tenant_id: str, request: Request):
             report_payload = json.loads(body.decode('utf-8') or '{}')
         except Exception:
             report_payload = {'raw': body.decode('utf-8', errors='replace')}
+    
     client_ip = request.client.host if request.client else 'unknown'
     ua = request.headers.get('user-agent','')
     browser_info = parse_user_agent(ua)
