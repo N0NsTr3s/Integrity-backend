@@ -8,6 +8,7 @@ from .db import init_db
 from .routes_manifest import router as manifest_router
 from .routes_reports import router as reports_router
 from .routes_admin import router as admin_router
+from .routes_auth import router as auth_router  # Add this line
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ app.add_middleware(
     allow_origins=[
         "https://n0nstr3s.github.io",
         "https://integrity-backend-yrq3.onrender.com",
+        "https://n0nstr3s.github.io/Integrity",
         "http://localhost:3000",
         "http://localhost:8000",
         "http://127.0.0.1"
@@ -37,6 +39,7 @@ app.add_middleware(
 app.include_router(manifest_router)
 app.include_router(reports_router)
 app.include_router(admin_router)
+app.include_router(auth_router)  # Add this line
 
 # Initialize DB
 init_db()
