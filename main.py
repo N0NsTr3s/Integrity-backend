@@ -45,7 +45,15 @@ def init_db():
         with sqlite3.connect(DB) as conn:
             c = conn.cursor()
             c.execute('''CREATE TABLE IF NOT EXISTS manifests (tenant TEXT PRIMARY KEY, manifest TEXT)''')
-            
+
+            # Create tenants table to store per-tenant api keys and allowed origins
+            c.execute('''CREATE TABLE IF NOT EXISTS tenants (
+                tenant TEXT PRIMARY KEY,
+                api_key TEXT,
+                allowed_origins TEXT,   -- JSON array string
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )''')
+
             # Check if reports table exists and what columns it has
             c.execute("PRAGMA table_info(reports)")
             existing_columns = {row[1] for row in c.fetchall()}
@@ -397,8 +405,64 @@ def get_platform(user_agent: str) -> str:
     
     return 'Unknown'
 
+def get_tenant_record(tenant_id: str) -> Optional[Dict[str, Any]]:
+    """Fetch a tenant's record from the database."""
+    try:
+        with sqlite3.connect(DB) as conn:
+            conn.row_factory = sqlite3.Row
+            c = conn.cursor()
+            c.execute("SELECT * FROM tenants WHERE tenant=?", (tenant_id,))
+            row = c.fetchone()
+            return dict(row) if row else None
+    except sqlite3.Error as e:
+        logger.error(f"Database error fetching tenant '{tenant_id}': {e}")
+        return None
+
+def origin_allowed_for_tenant(request: Request, tenant_id: str) -> bool:
+    """Check if the request's origin is allowed for the given tenant."""
+    origin = request.headers.get('origin')
+    if not origin:
+        # Allow requests without an origin header (e.g., from Postman, curl)
+        # This is a security trade-off; tighten if needed.
+        return True
+
+    tenant_rec = get_tenant_record(tenant_id)
+    if not tenant_rec or not tenant_rec.get('allowed_origins'):
+        # Default to disallow if no origins are configured
+        return False
+
+    try:
+        allowed_origins = json.loads(tenant_rec['allowed_origins'])
+        if not isinstance(allowed_origins, list):
+            return False
+    except json.JSONDecodeError:
+        return False
+
+    # Check for wildcard or exact match
+    if "*" in allowed_origins:
+        return True
+    
+    return origin in allowed_origins
+
 @app.post("/tenant/{tenant_id}/report")
 async def report_issue(tenant_id: str, request: Request):
+    # Fetch tenant record (may be None)
+    tenant_rec = get_tenant_record(tenant_id)
+
+    # Allow server-to-server usage if client provided the tenant api key in header
+    provided_key = (request.headers.get('x-api-key') or request.headers.get('authorization') or '').replace('Bearer ', '').strip()
+    server_key_ok = False
+    if tenant_rec and tenant_rec.get('api_key'):
+        if provided_key and provided_key == tenant_rec.get('api_key'):
+            server_key_ok = True
+
+    # If not server auth, allow anonymous browser POST only when origin matches tenant allowed_origins
+    if not server_key_ok:
+        if not origin_allowed_for_tenant(request, tenant_id):
+            # deny if neither server key nor allowed origin
+            raise HTTPException(status_code=401, detail="unauthorized")
+
+    # proceed to read payload
     try:
         report_payload = await request.json()
     except Exception:
