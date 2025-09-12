@@ -180,14 +180,38 @@
     </div>
 
     <script>
+        let adminSecret = localStorage.getItem('admin_secret') || '';
+
         let fullReportsData = {};
 
         async function loadDashboard() {
             const tenant = document.getElementById('tenantSelect').value;
             const days = document.getElementById('periodSelect').value;
             
+            // If no admin secret stored, prompt for it
+            if (!adminSecret) {
+                adminSecret = prompt("Enter admin secret to access dashboard:");
+                if (adminSecret) {
+                    localStorage.setItem('admin_secret', adminSecret);
+                }
+            }
+            
             try {
-                const response = await fetch(`/dashboard/${tenant}?days=${days}`);
+                const headers = adminSecret ? { 'x-admin-secret': adminSecret } : {};
+                
+                const response = await fetch(`/dashboard/${tenant}?days=${days}`, { 
+                    headers: headers 
+                });
+                
+                if (response.status === 401) {
+                    // If unauthorized, prompt for admin secret again
+                    adminSecret = prompt("Admin secret invalid. Enter admin secret:");
+                    if (adminSecret) {
+                        localStorage.setItem('admin_secret', adminSecret);
+                        return loadDashboard(); // Try again
+                    }
+                }
+                
                 const data = await response.json();
                 
                 // Defensive defaults in case backend omits fields
@@ -302,7 +326,16 @@
 
         async function loadIPCorrelation(tenant, days) {
             try {
-                const response = await fetch(`/ip-correlation/${tenant}?days=${days}`);
+                const headers = adminSecret ? { 'x-admin-secret': adminSecret } : {};
+                
+                const response = await fetch(`/ip-correlation/${tenant}?days=${days}`, {
+                    headers: headers
+                });
+                
+                if (response.status === 401) {
+                    return; // Already handled in loadDashboard
+                }
+                
                 const data = await response.json();
                 renderIPCorrelation(data);
             } catch (error) {

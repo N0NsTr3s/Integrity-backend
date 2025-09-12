@@ -74,11 +74,10 @@ def verify_auth_for_tenant(request: Request, tenant_id: str) -> bool:
 
 @router.post('/tenant/{tenant_id}/report')
 async def report_issue(tenant_id: str, request: Request):
-    # Use only one authentication check - the comprehensive one
+    # Authentication check remains the same
     if not verify_auth_for_tenant(request, tenant_id):
         raise HTTPException(status_code=401, detail="unauthorized")
-        
-    # Continue with report processing...
+    
     try:
         report_payload = await request.json()
     except Exception:
@@ -88,40 +87,52 @@ async def report_issue(tenant_id: str, request: Request):
         except Exception:
             report_payload = {'raw': body.decode('utf-8', errors='replace')}
     
-    client_ip = request.client.host if request.client else 'unknown'
-    ua = request.headers.get('user-agent','')
-    browser_info = parse_user_agent(ua)
-    # add client info
-    if isinstance(report_payload, dict):
-        # attach client info as a nested object
-        report_payload['client_info'] = { # pyright: ignore[reportArgumentType]
-            'client_ip': client_ip,
-            'user_agent': ua,
-            'browser': browser_info.get('browser'),
-            'browser_version': browser_info.get('version'),
-            'platform': browser_info.get('platform')
-        }
-    # Extract report_type from payload or use a default
+    # Extract structured data from report payload
     report_type = report_payload.get('type', 'unknown')
     
-    # Extract findings_count if available
+    # Extract page info
+    page_info = report_payload.get('page_info', {})
+    page_url = page_info.get('url', None)
+    
+    # Extract browser info
+    browser_info = report_payload.get('browser_info', {})
+    browser = browser_info.get('browser', 'Unknown')
+    browser_version = browser_info.get('version', 'Unknown')
+    platform = browser_info.get('platform', 'Unknown')
+    user_agent = browser_info.get('userAgent', None)
+    
+    # Get client IP (preferably from X-Forwarded-For or fallback to direct client)
+    client_ip = request.headers.get('x-forwarded-for', '').split(',')[0].strip()
+    if not client_ip:
+        client_ip = request.client.host if request.client else 'unknown'
+    
+    # Extract findings count
     findings = report_payload.get('findings', [])
     findings_count = len(findings) if isinstance(findings, list) else 0
     
-    # Extract injections_count if available
+    # Extract injections count
     injections = report_payload.get('injections', [])
     injections_count = len(injections) if isinstance(injections, list) else 0
     
-    # Determine risk level based on findings
-    risk_level = 'low'
-    if findings_count > 10 or injections_count > 5:
-        risk_level = 'critical'
-    elif findings_count > 5 or injections_count > 2:
-        risk_level = 'high'
-    elif findings_count > 0 or injections_count > 0:
-        risk_level = 'medium'
+    # Determine risk level based on report
+    if 'risk_level' in report_payload:
+        risk_level = report_payload.get('risk_level')
+    else:
+        # Calculate risk level from findings/injections
+        risk_level = 'low'
         
-    # simplified storage
+        # Check for critical injections
+        critical_count = report_payload.get('critical_count', 0)
+        high_risk_count = report_payload.get('high_risk_count', 0)
+        
+        if critical_count > 0 or ('injections' in report_payload and any(i.get('risk_level') == 'critical' for i in injections)):
+            risk_level = 'critical'
+        elif high_risk_count > 0 or findings_count > 5 or injections_count > 2:
+            risk_level = 'high'
+        elif findings_count > 0 or injections_count > 0:
+            risk_level = 'medium'
+    
+    # Insert the processed report into the database
     try:
         db_path = str(Path(__file__).parent.parent / 'data' / 'integ.db')
         with sqlite3.connect(db_path) as conn:
@@ -135,21 +146,19 @@ async def report_issue(tenant_id: str, request: Request):
             """, (
                 tenant_id, 
                 report_type,
-                report_payload.get('page_info', {}).get('url'), # pyright: ignore[reportAttributeAccessIssue]
+                page_url,
                 client_ip,
-                browser_info.get('name'),
-                browser_info.get('version'),
-                browser_info.get('os'),
-                ua,
+                browser,
+                browser_version,
+                platform,
+                user_agent,
                 findings_count,
                 injections_count,
                 risk_level,
                 json.dumps(report_payload)
             ))
             conn.commit()
-            report_id = c.lastrowid
     except sqlite3.Error as e:
-        logger.error(f"Database error storing report: {e}")
-        raise HTTPException(status_code=500, detail='Could not store report')
-
-    return {'status': 'stored', 'report_id': report_id}
+        logger.error(f"Database error: {e}")
+    
+    return {"status": "received"}

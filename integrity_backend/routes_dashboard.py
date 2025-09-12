@@ -16,8 +16,11 @@ def get_db_path():
 
 @router.get("/dashboard/{tenant_id}")
 async def get_dashboard(tenant_id: str, request: Request, days: int = Query(7, ge=1, le=90)):
-    # Require authentication
-    if not verify_auth_for_tenant(request, tenant_id):
+    # Check for admin authentication
+    admin_secret = os.environ.get('ADMIN_SECRET')
+    provided_secret = request.headers.get('x-admin-secret')
+    
+    if not (admin_secret and provided_secret == admin_secret) and not verify_auth_for_tenant(request, tenant_id):
         raise HTTPException(status_code=401, detail="unauthorized")
     
     try:
@@ -117,8 +120,11 @@ async def get_dashboard(tenant_id: str, request: Request, days: int = Query(7, g
 
 @router.get("/ip-correlation/{tenant_id}")
 async def get_ip_correlation(tenant_id: str, request: Request, days: int = Query(7, ge=1, le=90)):
-    # Require authentication
-    if not verify_auth_for_tenant(request, tenant_id):
+    # Check for admin authentication
+    admin_secret = os.environ.get('ADMIN_SECRET')
+    provided_secret = request.headers.get('x-admin-secret')
+    
+    if not (admin_secret and provided_secret == admin_secret) and not verify_auth_for_tenant(request, tenant_id):
         raise HTTPException(status_code=401, detail="unauthorized")
     
     try:
