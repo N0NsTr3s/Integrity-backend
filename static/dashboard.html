@@ -190,10 +190,17 @@
                 const response = await fetch(`/dashboard/${tenant}?days=${days}`);
                 const data = await response.json();
                 
+                // Defensive defaults in case backend omits fields
+                data.high_risk_reports = data.high_risk_reports || [];
+                data.summary = data.summary || [];
+                data.browsers = data.browsers || [];
+                data.client_statistics = data.client_statistics || [];
+                data.ip_incidents = data.ip_incidents || [];
+
                 // Store full report data for modal
                 fullReportsData = {};
                 data.high_risk_reports.forEach(r => {
-                    fullReportsData[r.id] = r;
+                    if (r && r.id !== undefined) fullReportsData[r.id] = r;
                 });
 
                 renderDashboard(data);
@@ -208,10 +215,10 @@
         function renderDashboard(data) {
             const dashboard = document.getElementById('dashboard');
             
-            const totalReports = data.summary.reduce((sum, s) => sum + s.count, 0);
-            const totalFindings = data.summary.reduce((sum, s) => sum + (s.total_findings || 0), 0);
-            const totalInjections = data.summary.reduce((sum, s) => sum + (s.total_injections || 0), 0);
-            const criticalReports = data.summary.reduce((sum, s) => sum + (s.critical_reports || 0), 0);
+            const totalReports = (data.summary || []).reduce((sum, s) => sum + (s.count || 0), 0);
+            const totalFindings = (data.summary || []).reduce((sum, s) => sum + (s.total_findings || 0), 0);
+            const totalInjections = (data.summary || []).reduce((sum, s) => sum + (s.total_injections || 0), 0);
+            const criticalReports = (data.summary || []).reduce((sum, s) => sum + (s.critical_reports || 0), 0);
             
             dashboard.innerHTML = `
                 <div class="stats-grid">
@@ -226,7 +233,7 @@
                     <div class="section-content">
                         <table>
                             <thead><tr><th>Type</th><th>Count</th><th>Findings</th><th>Injections</th><th>Critical</th><th>High Risk</th></tr></thead>
-                            <tbody>${data.summary.map(s => `<tr><td>${s.report_type}</td><td>${s.count}</td><td>${s.total_findings || 0}</td><td>${s.total_injections || 0}</td><td class="risk-critical">${s.critical_reports || 0}</td><td class="risk-high">${s.high_risk_reports || 0}</td></tr>`).join('')}</tbody>
+                            <tbody>${(data.summary || []).map(s => `<tr><td>${s.report_type}</td><td>${s.count}</td><td>${s.total_findings || 0}</td><td>${s.total_injections || 0}</td><td class="risk-critical">${s.critical_reports || 0}</td><td class="risk-high">${s.high_risk_reports || 0}</td></tr>`).join('')}</tbody>
                         </table>
                     </div>
                 </div>
@@ -236,7 +243,7 @@
                     <div class="section-content">
                         <table>
                             <thead><tr><th>Browser</th><th>Version</th><th>Reports</th><th>High Risk</th></tr></thead>
-                            <tbody>${data.browsers.map(b => `<tr><td>${b.browser || 'Unknown'}</td><td>${b.browser_version || 'Unknown'}</td><td>${b.count}</td><td class="${b.high_risk_count > 0 ? 'risk-high' : ''}">${b.high_risk_count}</td></tr>`).join('')}</tbody>
+                            <tbody>${(data.browsers || []).map(b => `<tr><td>${b.browser || 'Unknown'}</td><td>${b.browser_version || 'Unknown'}</td><td>${b.count}</td><td class="${(b.high_risk_count || 0) > 0 ? 'risk-high' : ''}">${b.high_risk_count || 0}</td></tr>`).join('')}</tbody>
                         </table>
                     </div>
                 </div>
@@ -247,7 +254,7 @@
                         <table>
                             <thead><tr><th>ID</th><th>Type</th><th>Risk</th><th>Client IP</th><th>Page URL</th><th>Browser</th><th>OS</th><th>Issues</th><th>Time</th><th>Actions</th></tr></thead>
                             <tbody>
-                                ${data.high_risk_reports.map(r => `
+                                ${(data.high_risk_reports || []).map(r => `
                                     <tr>
                                         <td>${r.id}</td>
                                         <td>${r.report_type}</td>
@@ -272,7 +279,7 @@
                         <table>
                             <thead><tr><th>Client IP</th><th>Total Reports</th><th>Risk Reports</th><th>User Agents</th><th>Last Seen</th></tr></thead>
                             <tbody>
-                                ${data.client_statistics.map(c => `
+                                ${(data.client_statistics || []).map(c => `
                                     <tr>
                                         <td>${c.client_ip}</td>
                                         <td>${c.total_reports}</td>
