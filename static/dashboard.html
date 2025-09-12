@@ -230,6 +230,7 @@
                 renderDashboard(data);
                 
                 await loadIPCorrelation(tenant, days);
+                await loadFileIntegrity(tenant, days);  // Add this line
             } catch (error) {
                 document.getElementById('dashboard').innerHTML = `
                     <div class="section"><div class="section-content"><p style="color: red;">Error loading dashboard: ${error.message}</p></div></div>`;
@@ -321,6 +322,16 @@
                     <div class="section-title">IP Address Incident Correlation</div>
                     <div class="section-content"><div id="ip-correlation-content"><!-- IP correlation data will be loaded here --></div></div>
                 </div>
+
+                <div class="section">
+                    <div class="section-title">File Integrity Issues</div>
+                    <div class="section-content">
+                        <div id="file-integrity-content">
+                            <!-- File integrity data will be loaded here -->
+                            <div class="loading">Loading file integrity data...</div>
+                        </div>
+                    </div>
+                </div>
             `;
         }
 
@@ -366,6 +377,66 @@
                         `).join('')}
                     </tbody>
                 </table>`;
+        }
+
+        async function loadFileIntegrity(tenant, days) {
+            try {
+                const headers = adminSecret ? { 'x-admin-secret': adminSecret } : {};
+                
+                const response = await fetch(`/file-integrity/${tenant}?days=${days}`, {
+                    headers: headers
+                });
+                
+                if (response.status === 401) {
+                    return; // Already handled in loadDashboard
+                }
+                
+                const data = await response.json();
+                renderFileIntegrity(data);
+            } catch (error) {
+                document.getElementById('file-integrity-content').innerHTML = `<p style="color: red;">Error loading file integrity data: ${error.message}</p>`;
+            }
+        }
+        
+        function renderFileIntegrity(data) {
+            const content = document.getElementById('file-integrity-content');
+            if (!data.affected_files || data.affected_files.length === 0) {
+                content.innerHTML = '<p>No file integrity issues found.</p>';
+                return;
+            }
+            
+            content.innerHTML = `
+                <h4>Affected Files (${data.total_reports} reports)</h4>
+                <table>
+                    <thead><tr><th>File URL</th><th>Incidents</th><th>Issue Types</th><th>Risk Levels</th></tr></thead>
+                    <tbody>
+                        ${data.affected_files.map(file => `
+                            <tr>
+                                <td><code>${file.url}</code></td>
+                                <td>${file.count}</td>
+                                <td>${file.issues.join(', ')}</td>
+                                <td>${file.risk_levels.map(level => `<span class="risk-${level}">${level}</span>`).join(', ')}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+                
+                <h4>Recent File Integrity Reports</h4>
+                <table>
+                    <thead><tr><th>Time</th><th>Page URL</th><th>Browser</th><th>Findings</th><th>Risk</th></tr></thead>
+                    <tbody>
+                        ${data.recent_reports.map(report => `
+                            <tr>
+                                <td>${new Date(report.at).toLocaleString()}</td>
+                                <td>${report.page_url || 'N/A'}</td>
+                                <td>${report.browser} ${report.browser_version}</td>
+                                <td>${report.findings_count}</td>
+                                <td class="risk-${report.risk_level}">${report.risk_level}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
         }
 
         function viewReportDetails(reportId) {
