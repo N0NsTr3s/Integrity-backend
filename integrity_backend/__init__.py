@@ -8,7 +8,8 @@ from .db import init_db
 from .routes_manifest import router as manifest_router
 from .routes_reports import router as reports_router
 from .routes_admin import router as admin_router
-from .routes_auth import router as auth_router  # Add this line
+from .routes_auth import router as auth_router
+from .routes_dashboard import router as dashboard_router  # Add this line
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -39,7 +40,8 @@ app.add_middleware(
 app.include_router(manifest_router)
 app.include_router(reports_router)
 app.include_router(admin_router)
-app.include_router(auth_router)  # Add this line
+app.include_router(auth_router)
+app.include_router(dashboard_router)  # Add this line
 
 # Initialize DB
 init_db()
