@@ -1,13 +1,16 @@
 from fastapi import APIRouter, HTTPException, Request
-import sqlite3, json, logging
+import sqlite3, json, logging, os
 from .db import get_tenant_record
 from .utils import parse_user_agent, analyze_injection_risk
 from datetime import datetime
 from pathlib import Path
+import jwt
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# Get JWT_SECRET from environment
+JWT_SECRET = os.environ.get('JWT_SECRET')
 
 def origin_allowed_for_tenant(request: Request, tenant_id: str) -> bool:
     origin = request.headers.get('origin')
@@ -23,9 +26,58 @@ def origin_allowed_for_tenant(request: Request, tenant_id: str) -> bool:
     if '*' in allowed: return True
     return origin in allowed
 
+# Use this function before processing reports
+def verify_auth_for_tenant(request: Request, tenant_id: str) -> bool:
+    """
+    Verify authentication using one of:
+    1. Valid JWT in Authorization: Bearer header
+    2. Valid API key in x-api-key header
+    3. Request origin matches tenant's allowed_origins
+    """
+    # 1. Check JWT token first (Authorization: Bearer)
+    auth_header = request.headers.get('authorization', '')
+    if auth_header.startswith('Bearer '):
+        token = auth_header.replace('Bearer ', '', 1).strip()
+        try:
+            if JWT_SECRET:
+                # Verify JWT token
+                payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"], audience="integrity-report")
+                if payload.get('tenant') == tenant_id:
+                    return True
+        except jwt.ExpiredSignatureError:
+            # Token expired - fall through to other auth methods
+            pass
+        except Exception as e:
+            print(f"Token validation error: {e}")
+            # Invalid token - fall through to other auth methods
+            pass
+    
+    # 2. Check API key
+    api_key = request.headers.get('x-api-key')
+    if api_key:
+        tenant_rec = get_tenant_record(tenant_id)
+        if tenant_rec and tenant_rec.get('api_key') == api_key:
+            return True
+    
+    # 3. Check Origin against allowed_origins
+    origin = request.headers.get('Origin') or request.headers.get('Referer') or ''
+    if origin:
+        tenant_rec = get_tenant_record(tenant_id)
+        if tenant_rec:
+            allowed_origins = tenant_rec.get('allowed_origins') or []
+            if '*' in allowed_origins or any(origin.startswith(o) for o in allowed_origins):
+                return True
+    
+    # No valid authentication found
+    return False
+
 
 @router.post('/tenant/{tenant_id}/report')
 async def report_issue(tenant_id: str, request: Request):
+    # Check authentication first
+    if not verify_auth_for_tenant(request, tenant_id):
+        raise HTTPException(status_code=401, detail="unauthorized")
+        
     tenant_rec = get_tenant_record(tenant_id)
     provided_key = (request.headers.get('x-api-key') or request.headers.get('authorization') or '').replace('Bearer ', '').strip()
     server_key_ok = False
