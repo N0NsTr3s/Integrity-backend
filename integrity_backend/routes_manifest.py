@@ -46,27 +46,39 @@ async def push_manifest(tenant_id: str, payload: dict, request: Request):
 
 @router.get("/manifest/{tenant_id}")
 async def get_manifest(tenant_id: str, request: Request):
+    logger.info(f"Manifest request for tenant {tenant_id} from {request.client.host}") # pyright: ignore[reportOptionalMemberAccess]
+    logger.info(f"Request headers: {request.headers}")
     """Get manifest for tenant"""
-    # You may want to add authentication here depending on your requirements
-    
     try:
-        conn = get_db_connection()
-        with conn.cursor() as c:
-            c.execute("SELECT manifest FROM manifests WHERE tenant = %s", (tenant_id,))
-            row = c.fetchone()
-            
-            if not row:
-                # Return empty manifest if not found
-                return {}
-            
-            # Parse JSON manifest
-            try:
-                manifest = json.loads(row[0]) if row[0] else {}
-                return manifest
-            except json.JSONDecodeError:
-                logger.error(f"Invalid JSON in manifest for tenant {tenant_id}")
-                return {}
-        conn.close()
+        conn = None
+        try:
+            conn = get_db_connection()
+            with conn.cursor() as c:
+                c.execute("SELECT manifest FROM manifests WHERE tenant = %s", (tenant_id,))
+                row = c.fetchone()
+                
+                if not row:
+                    # Log and return empty manifest if not found
+                    logger.warning(f"No manifest found for tenant {tenant_id}")
+                    return {}
+                
+                # Parse JSON manifest
+                try:
+                    manifest_json = row[0] if row[0] else '{}'
+                    manifest = json.loads(manifest_json)
+                    return manifest
+                except json.JSONDecodeError as e:
+                    logger.error(f"Invalid JSON in manifest for tenant {tenant_id}: {e}")
+                    return {}
+        finally:
+            if conn:
+                conn.close()
     except Exception as e:
         logger.error(f"Database error getting manifest: {e}")
         raise HTTPException(status_code=500, detail="database_error")
+
+
+@router.get("/tenant/{tenant_id}/manifest")
+async def get_tenant_manifest(tenant_id: str, request: Request):
+    """Legacy route - forwards to the standard manifest endpoint"""
+    return await get_manifest(tenant_id, request)
