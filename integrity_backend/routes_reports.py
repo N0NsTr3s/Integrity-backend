@@ -1,9 +1,10 @@
+import os
+import json
+import logging
 from fastapi import APIRouter, HTTPException, Request
-import sqlite3, json, logging, os
-from .db import get_tenant_record
-from .utils import parse_user_agent, analyze_injection_risk
 from datetime import datetime
-from pathlib import Path
+from .db import get_db_connection, get_tenant_record
+from .utils import parse_user_agent, analyze_injection_risk
 import jwt
 
 logger = logging.getLogger(__name__)
@@ -92,14 +93,14 @@ async def report_issue(tenant_id: str, request: Request):
     
     # Extract page info
     page_info = report_payload.get('page_info', {})
-    page_url = page_info.get('url', None)
+    page_url = page_info.get('url', None) # pyright: ignore[reportAttributeAccessIssue]
     
     # Extract browser info
     browser_info = report_payload.get('browser_info', {})
-    browser = browser_info.get('browser', 'Unknown')
-    browser_version = browser_info.get('version', 'Unknown')
-    platform = browser_info.get('platform', 'Unknown')
-    user_agent = browser_info.get('userAgent', None)
+    browser = browser_info.get('browser', 'Unknown') # pyright: ignore[reportAttributeAccessIssue]
+    browser_version = browser_info.get('version', 'Unknown') # pyright: ignore[reportAttributeAccessIssue]
+    platform = browser_info.get('platform', 'Unknown') # pyright: ignore[reportAttributeAccessIssue]
+    user_agent = browser_info.get('userAgent', None) # pyright: ignore[reportAttributeAccessIssue]
     
     # Get client IP (preferably from X-Forwarded-For or fallback to direct client)
     client_ip = request.headers.get('x-forwarded-for', '').split(',')[0].strip()
@@ -125,24 +126,23 @@ async def report_issue(tenant_id: str, request: Request):
         critical_count = report_payload.get('critical_count', 0)
         high_risk_count = report_payload.get('high_risk_count', 0)
         
-        if critical_count > 0 or ('injections' in report_payload and any(i.get('risk_level') == 'critical' for i in injections)):
+        if critical_count > 0 or ('injections' in report_payload and any(i.get('risk_level') == 'critical' for i in injections)): # pyright: ignore[reportAttributeAccessIssue, reportOperatorIssue]
             risk_level = 'critical'
-        elif high_risk_count > 0 or findings_count > 5 or injections_count > 2:
+        elif high_risk_count > 0 or findings_count > 5 or injections_count > 2: # pyright: ignore[reportOperatorIssue]
             risk_level = 'high'
         elif findings_count > 0 or injections_count > 0:
             risk_level = 'medium'
     
     # Insert the processed report into the database
     try:
-        db_path = str(Path(__file__).parent.parent / 'data' / 'integ.db')
-        with sqlite3.connect(db_path) as conn:
-            c = conn.cursor()
+        conn = get_db_connection()
+        with conn.cursor() as c:
             c.execute("""
                 INSERT INTO reports (
                     tenant, report_type, page_url, client_ip, browser, 
                     browser_version, platform, user_agent, findings_count, 
                     injections_count, risk_level, payload
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 tenant_id, 
                 report_type,
@@ -158,7 +158,8 @@ async def report_issue(tenant_id: str, request: Request):
                 json.dumps(report_payload)
             ))
             conn.commit()
-    except sqlite3.Error as e:
+        conn.close()
+    except Exception as e:
         logger.error(f"Database error: {e}")
     
     return {"status": "received"}

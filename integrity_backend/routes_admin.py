@@ -1,85 +1,138 @@
-from fastapi import APIRouter, Request, HTTPException
-import os, sqlite3, json, logging
-from .db import get_tenant_record
-from pathlib import Path
+import os
+import json
+import logging
+from fastapi import APIRouter, HTTPException, Request, Body
+from .db import get_db_connection  # Update this import
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+ADMIN_SECRET = os.environ.get('ADMIN_SECRET')
+if not ADMIN_SECRET:
+    logger.warning("ADMIN_SECRET not set in environment - admin endpoints will fail")
 
-def check_admin_secret(request: Request) -> bool:
-    admin_secret = os.environ.get('ADMIN_SECRET', '')
-    if not admin_secret:
-        return False
-    provided = request.headers.get('x-admin-secret') or request.headers.get('authorization') or ''
-    return provided == admin_secret
-
-
-@router.post('/admin/tenant/{tenant_id}')
-async def admin_create_update_tenant(tenant_id: str, payload: dict, request: Request):
-    if not check_admin_secret(request):
-        raise HTTPException(status_code=401, detail='unauthorized')
-    api_key = payload.get('api_key')
-    allowed_origins = payload.get('allowed_origins', [])
-    if not isinstance(allowed_origins, list):
-        raise HTTPException(status_code=400, detail='allowed_origins must be a list')
+@router.post("/admin/tenant/{tenant_id}")
+async def upsert_tenant(tenant_id: str, request: Request, data: dict = Body(...)):
+    """Create or update tenant record"""
+    # Check admin secret
+    admin_secret = request.headers.get("x-admin-secret")
+    if not ADMIN_SECRET or admin_secret != ADMIN_SECRET:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    
+    api_key = data.get('api_key', None)
+    if not api_key:
+        api_key = os.urandom(16).hex()  # Generate random API key if not provided
+    
+    allowed_origins = data.get('allowed_origins', ['*'])  # Default to wildcard
+    allowed_origins_json = json.dumps(allowed_origins)
+    
     try:
-        with sqlite3.connect(str(Path(__file__).parent.parent / 'data' / 'integ.db')) as conn:
-            c = conn.cursor()
-            c.execute("INSERT OR REPLACE INTO tenants (tenant, api_key, allowed_origins) VALUES (?, ?, ?)",
-                      (tenant_id, api_key, json.dumps(allowed_origins)))
+        # Get PostgreSQL connection
+        conn = get_db_connection()
+        with conn.cursor() as c:
+            # Use PostgreSQL upsert syntax
+            c.execute("""
+                INSERT INTO tenants (tenant, api_key, allowed_origins) 
+                VALUES (%s, %s, %s)
+                ON CONFLICT (tenant) 
+                DO UPDATE SET api_key = %s, allowed_origins = %s
+            """, (tenant_id, api_key, allowed_origins_json, api_key, allowed_origins_json))
             conn.commit()
-    except sqlite3.Error as e:
+        conn.close()
+        
+        return {
+            "tenant": tenant_id,
+            "api_key": api_key,
+            "allowed_origins": allowed_origins
+        }
+    except Exception as e:
         logger.error(f"Database error on tenant upsert: {e}")
-        raise HTTPException(status_code=500, detail='Could not store tenant')
-    return {'status': 'ok', 'tenant': tenant_id}
+        raise HTTPException(status_code=500, detail="database_error")
 
-
-@router.get('/admin/tenants')
-async def admin_list_tenants(request: Request):
-    if not check_admin_secret(request):
-        raise HTTPException(status_code=401, detail='unauthorized')
+@router.get("/admin/tenant/{tenant_id}")
+async def get_tenant(tenant_id: str, request: Request):
+    """Get tenant details"""
+    # Check admin secret
+    admin_secret = request.headers.get("x-admin-secret")
+    if not ADMIN_SECRET or admin_secret != ADMIN_SECRET:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    
     try:
-        with sqlite3.connect(str(Path(__file__).parent.parent / 'data' / 'integ.db')) as conn:
-            conn.row_factory = sqlite3.Row
-            c = conn.cursor()
-            c.execute('SELECT tenant, api_key, allowed_origins, created_at FROM tenants ORDER BY tenant')
-            rows = [dict(r) for r in c.fetchall()]
-            for r in rows:
+        conn = get_db_connection()
+        with conn.cursor() as c:
+            c.execute("SELECT tenant, api_key, allowed_origins FROM tenants WHERE tenant = %s", (tenant_id,))
+            row = c.fetchone()
+            
+            if not row:
+                raise HTTPException(status_code=404, detail="tenant_not_found")
+            
+            # Parse allowed_origins JSON
+            allowed_origins = []
+            if row[2]:  # Index for allowed_origins column
                 try:
-                    r['allowed_origins'] = json.loads(r.get('allowed_origins') or '[]')
-                except Exception:
-                    r['allowed_origins'] = []
-    except sqlite3.Error as e:
-        logger.error(f"Database error listing tenants: {e}")
-        raise HTTPException(status_code=500, detail='Could not list tenants')
-    return {'count': len(rows), 'tenants': rows}
+                    allowed_origins = json.loads(row[2])
+                except:
+                    pass
+            
+            return {
+                "tenant": row[0],  # tenant_id
+                "api_key": row[1],  # api_key
+                "allowed_origins": allowed_origins
+            }
+        conn.close()
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        logger.error(f"Database error on tenant get: {e}")
+        raise HTTPException(status_code=500, detail="database_error")
 
-
-@router.get('/admin/tenant/{tenant_id}')
-async def admin_get_tenant(tenant_id: str, request: Request):
-    if not check_admin_secret(request):
-        raise HTTPException(status_code=401, detail='unauthorized')
-    rec = get_tenant_record(tenant_id)
-    if not rec:
-        raise HTTPException(status_code=404, detail='not found')
+@router.get("/admin/tenants")
+async def list_tenants(request: Request):
+    """List all tenants"""
+    # Check admin secret
+    admin_secret = request.headers.get("x-admin-secret")
+    if not ADMIN_SECRET or admin_secret != ADMIN_SECRET:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    
     try:
-        rec['allowed_origins'] = json.loads(rec.get('allowed_origins') or '[]')
-    except Exception:
-        rec['allowed_origins'] = []
-    return rec
+        conn = get_db_connection()
+        with conn.cursor() as c:
+            c.execute("SELECT tenant FROM tenants")
+            tenants = [row[0] for row in c.fetchall()]
+            return {"tenants": tenants}
+        conn.close()
+    except Exception as e:
+        logger.error(f"Database error on tenants list: {e}")
+        raise HTTPException(status_code=500, detail="database_error")
 
-
-@router.delete('/admin/tenant/{tenant_id}')
-async def admin_delete_tenant(tenant_id: str, request: Request):
-    if not check_admin_secret(request):
-        raise HTTPException(status_code=401, detail='unauthorized')
+@router.post("/admin/manifest/{tenant_id}")
+async def update_manifest(tenant_id: str, request: Request, data: dict = Body(...)):
+    """Update tenant manifest"""
+    # Check admin secret
+    admin_secret = request.headers.get("x-admin-secret")
+    if not ADMIN_SECRET or admin_secret != ADMIN_SECRET:
+        raise HTTPException(status_code=401, detail="unauthorized")
+    
+    manifest = data.get('manifest', {})
+    manifest_json = json.dumps(manifest)
+    
     try:
-        with sqlite3.connect(str(Path(__file__).parent.parent / 'data' / 'integ.db')) as conn:
-            c = conn.cursor()
-            c.execute('DELETE FROM tenants WHERE tenant=?', (tenant_id,))
+        conn = get_db_connection()
+        with conn.cursor() as c:
+            # Use PostgreSQL upsert syntax
+            c.execute("""
+                INSERT INTO manifests (tenant, manifest) 
+                VALUES (%s, %s)
+                ON CONFLICT (tenant) 
+                DO UPDATE SET manifest = %s
+            """, (tenant_id, manifest_json, manifest_json))
             conn.commit()
-    except sqlite3.Error as e:
-        logger.error(f"Database error deleting tenant: {e}")
-        raise HTTPException(status_code=500, detail='Could not delete tenant')
-    return {'status': 'deleted', 'tenant': tenant_id}
+        conn.close()
+        
+        return {
+            "tenant": tenant_id,
+            "manifest": manifest
+        }
+    except Exception as e:
+        logger.error(f"Database error on manifest update: {e}")
+        raise HTTPException(status_code=500, detail="database_error")

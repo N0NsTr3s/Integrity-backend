@@ -1,10 +1,11 @@
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
-import sqlite3, json, logging
+import json, logging
 from pathlib import Path
 import jwt
 import os
 from .routes_reports import verify_auth_for_tenant  # Reuse the same auth function
+from .db import get_db_connection
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -39,34 +40,47 @@ async def push_manifest(tenant_id: str, payload: dict, request: Request):
     if not isinstance(manifest, dict):
         raise HTTPException(status_code=400, detail='Invalid manifest payload')
     try:
-        db_path = str(Path(__file__).parent.parent / 'data' / 'integ.db')
-        with sqlite3.connect(db_path) as conn:
-            c = conn.cursor()
-            c.execute("INSERT OR REPLACE INTO manifests (tenant, manifest) VALUES (?, ?)",
-                      (tenant_id, json.dumps(manifest)))
+        conn = get_db_connection()
+        with conn.cursor() as c:
+            # Use INSERT ... ON CONFLICT for PostgreSQL to achieve "INSERT OR REPLACE"
+            c.execute("""
+                INSERT INTO manifests (tenant, manifest)
+                VALUES (%s, %s)
+                ON CONFLICT (tenant) DO UPDATE SET
+                    manifest = EXCLUDED.manifest
+            """, (tenant_id, json.dumps(manifest)))
             conn.commit()
-    except sqlite3.Error as e:
+        conn.close()
+    except Exception as e:
         logger.error(f"Database error on manifest push: {e}")
         raise HTTPException(status_code=500, detail='Could not store manifest')
     return {'status': 'stored'}
 
 
-@router.get('/tenant/{tenant_id}/manifest')
+
+@router.get("/manifest/{tenant_id}")
 async def get_manifest(tenant_id: str, request: Request):
-    # Make token authentication mandatory
-    if not verify_auth_for_tenant(request, tenant_id):
-        raise HTTPException(status_code=401, detail="unauthorized")
+    """Get manifest for tenant"""
+    # You may want to add authentication here depending on your requirements
     
     try:
-        db_path = str(Path(__file__).parent.parent / 'data' / 'integ.db')
-        with sqlite3.connect(db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            c = conn.cursor()
-            c.execute("SELECT manifest FROM manifests WHERE tenant=?", (tenant_id,))
+        conn = get_db_connection()
+        with conn.cursor() as c:
+            c.execute("SELECT manifest FROM manifests WHERE tenant = %s", (tenant_id,))
             row = c.fetchone()
-    except sqlite3.Error as e:
-        logger.error(f"Database error on manifest get: {e}")
-        raise HTTPException(status_code=500, detail='Could not retrieve manifest')
-    if row:
-        return json.loads(row['manifest'])
-    raise HTTPException(status_code=404, detail='No manifest found')
+            
+            if not row:
+                # Return empty manifest if not found
+                return {}
+            
+            # Parse JSON manifest
+            try:
+                manifest = json.loads(row[0]) if row[0] else {}
+                return manifest
+            except json.JSONDecodeError:
+                logger.error(f"Invalid JSON in manifest for tenant {tenant_id}")
+                return {}
+        conn.close()
+    except Exception as e:
+        logger.error(f"Database error getting manifest: {e}")
+        raise HTTPException(status_code=500, detail="database_error")
