@@ -3,6 +3,7 @@ import json
 import logging
 from fastapi import APIRouter, HTTPException, Request, Body
 from .db import get_db_connection  # Update this import
+from psycopg2.extras import RealDictCursor  # Import RealDictCursor
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -59,7 +60,8 @@ async def get_tenant(tenant_id: str, request: Request):
     
     try:
         conn = get_db_connection()
-        with conn.cursor() as c:
+        # Use RealDictCursor to get column names
+        with conn.cursor(cursor_factory=RealDictCursor) as c:
             c.execute("SELECT tenant, api_key, allowed_origins FROM tenants WHERE tenant = %s", (tenant_id,))
             row = c.fetchone()
             
@@ -68,15 +70,15 @@ async def get_tenant(tenant_id: str, request: Request):
             
             # Parse allowed_origins JSON
             allowed_origins = []
-            if row[2]:  # Index for allowed_origins column
+            if row["allowed_origins"]:
                 try:
-                    allowed_origins = json.loads(row[2])
+                    allowed_origins = json.loads(row["allowed_origins"])
                 except:
                     pass
             
             return {
-                "tenant": row[0],  # tenant_id
-                "api_key": row[1],  # api_key
+                "tenant": row["tenant"],
+                "api_key": row["api_key"],
                 "allowed_origins": allowed_origins
             }
         conn.close()
