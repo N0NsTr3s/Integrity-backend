@@ -74,3 +74,9 @@ async def admin_ui():
     if admin_file.exists():
         return FileResponse(str(admin_file))
     raise HTTPException(status_code=404, detail='admin UI not found')
+
+app.mount("/static", StaticFiles(directory=str(Path(__file__).parent.parent / "static")), name="static")
+@app.get("/dashboard")
+
+async def dashboard_page():
+    return FileResponse(str(Path(__file__).parent.parent / "static" / "dashboard.html"))
