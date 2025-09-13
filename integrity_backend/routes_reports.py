@@ -3,7 +3,8 @@ import json
 import logging
 from fastapi import APIRouter, HTTPException, Request
 from datetime import datetime
-from .db import get_db_connection, get_tenant_record
+from .db import (get_db_connection, get_tenant_record, sanitize_payload, sanitize_findings, 
+                sanitize_injections, safe_json_dumps)
 from .utils import parse_user_agent, analyze_injection_risk
 import jwt
 
@@ -88,34 +89,42 @@ async def report_issue(tenant_id: str, request: Request):
         except Exception:
             report_payload = {'raw': body.decode('utf-8', errors='replace')}
     
+    # Sanitize the entire payload
+    report_payload = sanitize_payload(report_payload)
+    
     # Extract structured data from report payload
     report_type = report_payload.get('type', 'unknown')
     
     # Extract page info
     page_info = report_payload.get('page_info', {})
-    page_url = page_info.get('url', None) # pyright: ignore[reportAttributeAccessIssue]
+    page_url = page_info.get('url', None)
     
     # Extract browser info
     browser_info = report_payload.get('browser_info', {})
-    browser = browser_info.get('browser', 'Unknown') # pyright: ignore[reportAttributeAccessIssue]
-    browser_version = browser_info.get('version', 'Unknown') # pyright: ignore[reportAttributeAccessIssue]
-    platform = browser_info.get('platform', 'Unknown') # pyright: ignore[reportAttributeAccessIssue]
-    user_agent = browser_info.get('userAgent', None) # pyright: ignore[reportAttributeAccessIssue]
+    browser = browser_info.get('browser', 'Unknown')
+    browser_version = browser_info.get('version', 'Unknown')
+    platform = browser_info.get('platform', 'Unknown')
+    user_agent = browser_info.get('userAgent', None)
     
     # Get client IP (preferably from X-Forwarded-For or fallback to direct client)
     client_ip = request.headers.get('x-forwarded-for', '').split(',')[0].strip()
     if not client_ip:
         client_ip = request.client.host if request.client else 'unknown'
     
-    # Extract findings count
-    findings = report_payload.get('findings', [])
-    findings_count = len(findings) if isinstance(findings, list) else 0
+    # Sanitize findings and injections specifically
+    raw_findings = report_payload.get('findings', [])
+    findings = sanitize_findings(raw_findings)
+    findings_count = len(findings)
     
-    # Extract injections count
-    injections = report_payload.get('injections', [])
-    injections_count = len(injections) if isinstance(injections, list) else 0
+    raw_injections = report_payload.get('injections', [])
+    injections = sanitize_injections(raw_injections)
+    injections_count = len(injections)
     
-    # Determine risk level based on report
+    # Update the payload with sanitized data
+    report_payload['findings'] = findings
+    report_payload['injections'] = injections
+    
+    # Determine risk level as before but use sanitized data
     if 'risk_level' in report_payload:
         risk_level = report_payload.get('risk_level')
     else:
@@ -126,14 +135,14 @@ async def report_issue(tenant_id: str, request: Request):
         critical_count = report_payload.get('critical_count', 0)
         high_risk_count = report_payload.get('high_risk_count', 0)
         
-        if critical_count > 0 or ('injections' in report_payload and any(i.get('risk_level') == 'critical' for i in injections)): # pyright: ignore[reportAttributeAccessIssue, reportOperatorIssue]
+        if critical_count > 0 or any(i.get('risk_level') == 'critical' for i in injections):
             risk_level = 'critical'
-        elif high_risk_count > 0 or findings_count > 5 or injections_count > 2: # pyright: ignore[reportOperatorIssue]
+        elif high_risk_count > 0 or findings_count > 5 or injections_count > 2:
             risk_level = 'high'
         elif findings_count > 0 or injections_count > 0:
             risk_level = 'medium'
     
-    # Insert the processed report into the database
+    # Insert the processed report into the database using safe JSON serialization
     try:
         conn = get_db_connection()
         with conn.cursor() as c:
@@ -155,7 +164,7 @@ async def report_issue(tenant_id: str, request: Request):
                 findings_count,
                 injections_count,
                 risk_level,
-                json.dumps(report_payload)
+                safe_json_dumps(report_payload)  # Use safe JSON serialization
             ))
             conn.commit()
         conn.close()
