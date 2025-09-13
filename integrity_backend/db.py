@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 # PostgreSQL Connection Details
 DB_HOST = os.environ.get('DB_HOST', 'reder_db_host')
-DB_NAME = os.environ.get('DB_NAME', 'integrity_db')
+DB_NAME = os.environ.get('DB_NAME', 'integrity_db_ap6p')
 DB_USER = os.environ.get('DB_USER', 'render_secret_user')
 DB_PASS = os.environ.get('DB_PASS', 'render_secret_password')
 DB_PORT = os.environ.get('DB_PORT', '5432')
@@ -154,3 +154,4 @@ def get_tenant_record(tenant_id: str):
     except psycopg2.Error as e:
         logger.error(f"Database error getting tenant: {e}")
         return None
+
