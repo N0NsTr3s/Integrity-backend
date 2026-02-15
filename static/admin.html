@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Script Integrity SaaS - Admin Console</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .section {
+            background: white;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .section-title {
+            background: #f8f9fa;
+            padding: 15px 20px;
+            font-weight: bold;
+            border-bottom: 1px solid #e9ecef;
+        }
+        .section-content {
+            padding: 20px;
+        }
+        .controls {
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+        }
+        select, button, input {
+            padding: 8px 16px;
+            margin-right: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            cursor: pointer;
+        }
+        button:hover { background: #0056b3; }
+        button.danger { background: #dc3545; }
+        button.danger:hover { background: #c82333; }
+        button.success { background: #28a745; }
+        button.success:hover { background: #218838; }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+        textarea {
+            width: 100%;
+            min-height: 400px;
+            font-family: 'Courier New', monospace;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .status {
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        .status.success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status.error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .tab-nav {
+            display: flex;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e9ecef;
+        }
+        .tab {
+            padding: 12px 20px;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+        }
+        .tab.active {
+            font-weight: bold;
+            border-bottom-color: #007bff;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Script Integrity SaaS Admin Console</h1>
+            <p>Manage tenants, manifests, and security settings</p>
+        </div>
+
+        <div class="section">
+            <div class="tab-nav">
+                <div class="tab active" data-tab="tenants">Tenant Management</div>
+                <div class="tab" data-tab="manifests">Manifest Management</div>
+                <div class="tab" data-tab="settings">System Settings</div>
+            </div>
+            
+            <div id="tenants" class="tab-content active">
+                <div class="section-content">
+                    <h2>Tenant Management</h2>
+                    <div class="controls">
+                        <select id="tenantSelect">
+                            <option value="">-- Select Tenant --</option>
+                        </select>
+                        <button onclick="loadTenantDetails()">Load Tenant</button>
+                        <button onclick="createNewTenant()">Create New Tenant</button>
+                    </div>
+                    
+                    <div id="tenantDetails" style="display: none;">
+                        <div class="form-group">
+                            <label for="tenantId">Tenant ID</label>
+                            <input type="text" id="tenantId" placeholder="tenant-id">
+                        </div>
+                        <div class="form-group">
+                            <label for="apiKey">API Key</label>
+                            <input type="text" id="apiKey" style="width: 300px;">
+                            <button onclick="generateApiKey()">Generate New</button>
+                        </div>
+                        <div class="form-group">
+                            <label for="allowedOrigins">Allowed Origins (one per line)</label>
+                            <textarea id="allowedOrigins" style="min-height: 150px;"></textarea>
+                        </div>
+                        <div class="controls">
+                            <button class="success" onclick="saveTenant()">Save Tenant</button>
+                            <button class="danger" onclick="deleteTenant()">Delete Tenant</button>
+                        </div>
+                    </div>
+                    
+                    <div id="tenantStatus"></div>
+                </div>
+            </div>
+            
+            <div id="manifests" class="tab-content">
+                <div class="section-content">
+                    <h2>Manifest Management</h2>
+                    <div class="controls">
+                        <select id="manifestTenantSelect">
+                            <option value="">-- Select Tenant --</option>
+                        </select>
+                        <button onclick="loadManifest()">Load Manifest</button>
+                    </div>
+                    
+                    <div id="manifestEditor" style="display: none;">
+                        <div class="form-group">
+                            <label for="manifestContent">Manifest JSON</label>
+                            <textarea id="manifestContent" placeholder='{
+  "integrity": {
+    "enabled": true,
+    "reporting_endpoint": "/tenant/{tenant_id}/report",
+    "files": [
+      {
+        "path": "/assets/js/main.js",
+        "integrity": "sha256-AbCdEfG..."
+      }
+    ]
+  }
+}'></textarea>
+                        </div>
+                        <div class="controls">
+                            <button onclick="formatJson()">Format JSON</button>
+                            <button onclick="validateJson()">Validate</button>
+                            <button class="success" onclick="saveManifest()">Save Manifest</button>
+                        </div>
+                    </div>
+                    
+                    <div id="manifestStatus"></div>
+                </div>
+            </div>
+            
+            <div id="settings" class="tab-content">
+                <div class="section-content">
+                    <h2>System Settings</h2>
+                    <p>Coming soon...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let adminSecret = localStorage.getItem('admin_secret') || '';
+        
+        // Check for admin secret on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            if (!adminSecret) {
+                promptForAdminSecret();
+            } else {
+                loadTenants();
+            }
+            
+            // Set up tabs
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.addEventListener('click', () => {
+                    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                    
+                    tab.classList.add('active');
+                    document.getElementById(tab.dataset.tab).classList.add('active');
+                });
+            });
+        });
+        
+        function promptForAdminSecret() {
+            adminSecret = prompt("Enter admin secret to access admin console:");
+            if (adminSecret) {
+                localStorage.setItem('admin_secret', adminSecret);
+                loadTenants();
+            } else {
+                showStatus('tenantStatus', 'Admin secret required to access this page.', 'error');
+            }
+        }
+        
+        async function loadTenants() {
+            try {
+                const response = await fetch('/admin/tenants', {
+                    headers: { 'x-admin-secret': adminSecret }
+                });
+                
+                if (response.status === 401) {
+                    localStorage.removeItem('admin_secret');
+                    promptForAdminSecret();
+                    return;
+                }
+                
+                const data = await response.json();
+                console.log("Received tenants:", data); // Debug logging
+                
+                // Populate tenant dropdowns
+                const tenantSelect = document.getElementById('tenantSelect');
+                const manifestTenantSelect = document.getElementById('manifestTenantSelect');
+                
+                // Clear existing options (except first)
+                tenantSelect.innerHTML = '<option value="">-- Select Tenant --</option>';
+                manifestTenantSelect.innerHTML = '<option value="">-- Select Tenant --</option>';
+                
+                // Add tenants - verify that data.tenants exists and is an array
+                if (data.tenants && Array.isArray(data.tenants)) {
+                    data.tenants.forEach(tenant => {
+                        // Skip undefined tenants
+                        if (!tenant) return;
+                        
+                        const option1 = document.createElement('option');
+                        option1.value = tenant;
+                        option1.textContent = tenant;
+                        tenantSelect.appendChild(option1);
+                        
+                        const option2 = document.createElement('option');
+                        option2.value = tenant;
+                        option2.textContent = tenant;
+                        manifestTenantSelect.appendChild(option2);
+                    });
+                } else {
+                    showStatus('tenantStatus', 'Server returned invalid tenant data', 'error');
+                }
+                
+            } catch (error) {
+                showStatus('tenantStatus', `Error loading tenants: ${error.message}`, 'error');
+            }
+        }
+        
+        async function loadTenantDetails() {
+            const tenant = document.getElementById('tenantSelect').value;
+            if (!tenant) {
+                showStatus('tenantStatus', 'Please select a tenant', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/admin/tenant/${tenant}`, {
+                    headers: { 'x-admin-secret': adminSecret }
+                });
+                
+                if (response.status === 401) {
+                    localStorage.removeItem('admin_secret');
+                    promptForAdminSecret();
+                    return;
+                }
+                
+                const data = await response.json();
+                
+                document.getElementById('tenantId').value = data.tenant;
+                document.getElementById('apiKey').value = data.api_key;
+                document.getElementById('allowedOrigins').value = data.allowed_origins.join('\n');
+                
+                document.getElementById('tenantDetails').style.display = 'block';
+                
+            } catch (error) {
+                showStatus('tenantStatus', `Error loading tenant: ${error.message}`, 'error');
+            }
+        }
+        
+        function createNewTenant() {
+            document.getElementById('tenantId').value = '';
+            document.getElementById('apiKey').value = '';
+            document.getElementById('allowedOrigins').value = '*';
+            document.getElementById('tenantDetails').style.display = 'block';
+        }
+        
+        function generateApiKey() {
+            // Generate random API key
+            const array = new Uint8Array(16);
+            window.crypto.getRandomValues(array);
+            const apiKey = Array.from(array).map(b => b.toString(16).padStart(2, '0')).join('');
+            document.getElementById('apiKey').value = apiKey;
+        }
+        
+        async function saveTenant() {
+            const tenantId = document.getElementById('tenantId').value.trim();
+            const apiKey = document.getElementById('apiKey').value.trim();
+            const allowedOriginsText = document.getElementById('allowedOrigins').value.trim();
+            
+            if (!tenantId) {
+                showStatus('tenantStatus', 'Tenant ID is required', 'error');
+                return;
+            }
+            
+            const allowedOrigins = allowedOriginsText.split('\n')
+                .map(line => line.trim())
+                .filter(line => line.length > 0);
+            
+            try {
+                console.log(`Saving tenant ${tenantId}...`); // Debug logging
+                const response = await fetch(`/admin/tenant/${tenantId}`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'x-admin-secret': adminSecret 
+                    },
+                    body: JSON.stringify({
+                        api_key: apiKey,
+                        allowed_origins: allowedOrigins
+                    })
+                });
+                
+                if (response.status === 401) {
+                    localStorage.removeItem('admin_secret');
+                    promptForAdminSecret();
+                    return;
+                }
+                
+                const data = await response.json();
+                console.log("Save tenant response:", data); // Debug logging
+                showStatus('tenantStatus', `Tenant ${tenantId} saved successfully!`, 'success');
+                
+                // Refresh tenant lists after a short delay to allow DB update to complete
+                setTimeout(() => {
+                    loadTenants();
+                }, 500);
+                
+            } catch (error) {
+                console.error("Error saving tenant:", error); // Debug logging
+                showStatus('tenantStatus', `Error saving tenant: ${error.message}`, 'error');
+            }
+        }
+        
+        function deleteTenant() {
+            // This would need to be implemented in the backend
+            alert("Delete tenant functionality not implemented yet.");
+        }
+        
+        async function loadManifest() {
+            const tenant = document.getElementById('manifestTenantSelect').value;
+            if (!tenant) {
+                showStatus('manifestStatus', 'Please select a tenant', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/manifest/${tenant}`, {
+                    headers: { 'x-admin-secret': adminSecret }
+                });
+                
+                const data = await response.json();
+                document.getElementById('manifestContent').value = JSON.stringify(data, null, 2);
+                document.getElementById('manifestEditor').style.display = 'block';
+                
+            } catch (error) {
+                showStatus('manifestStatus', `Error loading manifest: ${error.message}`, 'error');
+            }
+        }
+        
+        function formatJson() {
+            try {
+                const content = document.getElementById('manifestContent').value;
+                const parsed = JSON.parse(content);
+                document.getElementById('manifestContent').value = JSON.stringify(parsed, null, 2);
+            } catch (error) {
+                showStatus('manifestStatus', `Invalid JSON: ${error.message}`, 'error');
+            }
+        }
+        
+        function validateJson() {
+            try {
+                const content = document.getElementById('manifestContent').value;
+                JSON.parse(content);
+                showStatus('manifestStatus', 'JSON is valid!', 'success');
+            } catch (error) {
+                showStatus('manifestStatus', `Invalid JSON: ${error.message}`, 'error');
+            }
+        }
+        
+        async function saveManifest() {
+            const tenant = document.getElementById('manifestTenantSelect').value;
+            if (!tenant) {
+                showStatus('manifestStatus', 'Please select a tenant', 'error');
+                return;
+            }
+            
+            try {
+                const content = document.getElementById('manifestContent').value;
+                const manifest = JSON.parse(content);
+                
+                const response = await fetch(`/tenant/${tenant}/manifest/push`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'x-admin-secret': adminSecret 
+                    },
+                    body: JSON.stringify({ manifest })
+                });
+                
+                if (response.status === 401) {
+                    localStorage.removeItem('admin_secret');
+                    promptForAdminSecret();
+                    return;
+                }
+                
+                const data = await response.json();
+                showStatus('manifestStatus', `Manifest saved for tenant ${tenant}!`, 'success');
+                
+            } catch (error) {
+                showStatus('manifestStatus', `Error saving manifest: ${error.message}`, 'error');
+            }
+        }
+        
+        function showStatus(elementId, message, type) {
+            const statusElement = document.getElementById(elementId);
+            statusElement.textContent = message;
+            statusElement.className = `status ${type}`;
+        }
+    </script>
+</body>
+</html>

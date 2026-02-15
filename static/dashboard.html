@@ -64,6 +64,7 @@
         }
         .section-content {
             padding: 20px;
+            overflow-x: auto;
         }
         table {
             width: 100%;
@@ -73,28 +74,17 @@
             text-align: left;
             padding: 12px;
             border-bottom: 1px solid #e9ecef;
+            white-space: nowrap;
         }
         th {
             background: #f8f9fa;
             font-weight: 600;
         }
-        .risk-critical {
-            color: #dc3545;
-            font-weight: bold;
-        }
-        .risk-high {
-            color: #fd7e14;
-            font-weight: bold;
-        }
-        .risk-medium {
-            color: #ffc107;
-        }
-        .risk-low {
-            color: #28a745;
-        }
-        .controls {
-            margin-bottom: 20px;
-        }
+        .risk-critical { color: #dc3545; font-weight: bold; }
+        .risk-high { color: #fd7e14; font-weight: bold; }
+        .risk-medium { color: #ffc107; }
+        .risk-low { color: #28a745; }
+        .controls { margin-bottom: 20px; }
         select, button {
             padding: 8px 16px;
             margin-right: 10px;
@@ -106,14 +96,46 @@
             color: white;
             cursor: pointer;
         }
-        button:hover {
-            background: #0056b3;
+        button:hover { background: #0056b3; }
+        .loading { text-align: center; padding: 40px; color: #666; }
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.4);
         }
-        .loading {
-            text-align: center;
-            padding: 40px;
-            color: #666;
+        .modal-content {
+            background-color: #fefefe;
+            margin: 5% auto;
+            padding: 20px;
+            border: 1px solid #888;
+            width: 80%;
+            max-width: 900px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2);
         }
+        .modal-header {
+            padding-bottom: 10px;
+            border-bottom: 1px solid #e9ecef;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .modal-header h2 { margin: 0; }
+        .close {
+            color: #aaa;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .close:hover, .close:focus { color: black; }
+        .modal-body { padding-top: 15px; max-height: 70vh; overflow-y: auto; }
+        pre { background: #eee; padding: 10px; border-radius: 4px; white-space: pre-wrap; word-break: break-all; }
     </style>
 </head>
 <body>
@@ -144,89 +166,99 @@
         </div>
     </div>
 
+    <!-- Modal for Report Details -->
+    <div id="reportModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modalTitle">Report Details</h2>
+                <span class="close" onclick="closeModal()">&times;</span>
+            </div>
+            <div class="modal-body" id="modalBody">
+                <!-- Details will be loaded here -->
+            </div>
+        </div>
+    </div>
+
     <script>
+        let adminSecret = localStorage.getItem('admin_secret') || '';
+
+        let fullReportsData = {};
+
         async function loadDashboard() {
             const tenant = document.getElementById('tenantSelect').value;
             const days = document.getElementById('periodSelect').value;
             
+            // If no admin secret stored, prompt for it
+            if (!adminSecret) {
+                adminSecret = prompt("Enter admin secret to access dashboard:");
+                if (adminSecret) {
+                    localStorage.setItem('admin_secret', adminSecret);
+                }
+            }
+            
             try {
-                const response = await fetch(`/dashboard/${tenant}?days=${days}`);
+                const headers = adminSecret ? { 'x-admin-secret': adminSecret } : {};
+                
+                const response = await fetch(`/dashboard/${tenant}?days=${days}`, { 
+                    headers: headers 
+                });
+                
+                if (response.status === 401) {
+                    // If unauthorized, prompt for admin secret again
+                    adminSecret = prompt("Admin secret invalid. Enter admin secret:");
+                    if (adminSecret) {
+                        localStorage.setItem('admin_secret', adminSecret);
+                        return loadDashboard(); // Try again
+                    }
+                }
+                
                 const data = await response.json();
                 
+                // Defensive defaults in case backend omits fields
+                data.high_risk_reports = data.high_risk_reports || [];
+                data.summary = data.summary || [];
+                data.browsers = data.browsers || [];
+                data.client_statistics = data.client_statistics || [];
+                data.ip_incidents = data.ip_incidents || [];
+
+                // Store full report data for modal
+                fullReportsData = {};
+                data.high_risk_reports.forEach(r => {
+                    if (r && r.id !== undefined) fullReportsData[r.id] = r;
+                });
+
                 renderDashboard(data);
                 
-                // Load IP correlation data
                 await loadIPCorrelation(tenant, days);
+                await loadFileIntegrity(tenant, days);  // Add this line
             } catch (error) {
                 document.getElementById('dashboard').innerHTML = `
-                    <div class="section">
-                        <div class="section-content">
-                            <p style="color: red;">Error loading dashboard: ${error.message}</p>
-                        </div>
-                    </div>
-                `;
+                    <div class="section"><div class="section-content"><p style="color: red;">Error loading dashboard: ${error.message}</p></div></div>`;
             }
         }
 
         function renderDashboard(data) {
             const dashboard = document.getElementById('dashboard');
             
-            // Calculate totals
-            const totalReports = data.summary.reduce((sum, s) => sum + s.count, 0);
-            const totalFindings = data.summary.reduce((sum, s) => sum + (s.total_findings || 0), 0);
-            const totalInjections = data.summary.reduce((sum, s) => sum + (s.total_injections || 0), 0);
-            const criticalReports = data.summary.reduce((sum, s) => sum + (s.critical_reports || 0), 0);
+            const totalReports = (data.summary || []).reduce((sum, s) => sum + (s.count || 0), 0);
+            const totalFindings = (data.summary || []).reduce((sum, s) => sum + (s.total_findings || 0), 0);
+            const totalInjections = (data.summary || []).reduce((sum, s) => sum + (s.total_injections || 0), 0);
+            const criticalReports = (data.summary || []).reduce((sum, s) => sum + (s.critical_reports || 0), 0);
             
             dashboard.innerHTML = `
                 <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-title">Total Reports</div>
-                        <div class="stat-value">${totalReports}</div>
-                        <div class="stat-subtitle">Last ${data.period_days} days</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-title">File Integrity Issues</div>
-                        <div class="stat-value">${totalFindings}</div>
-                        <div class="stat-subtitle">Compromised files detected</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-title">DOM Injections</div>
-                        <div class="stat-value">${totalInjections}</div>
-                        <div class="stat-subtitle">Malicious elements injected</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-title">Critical Alerts</div>
-                        <div class="stat-value risk-critical">${criticalReports}</div>
-                        <div class="stat-subtitle">Require immediate attention</div>
-                    </div>
+                    <div class="stat-card"><div class="stat-title">Total Reports</div><div class="stat-value">${totalReports}</div><div class="stat-subtitle">Last ${data.period_days} days</div></div>
+                    <div class="stat-card"><div class="stat-title">File Integrity Issues</div><div class="stat-value">${totalFindings}</div><div class="stat-subtitle">Compromised files detected</div></div>
+                    <div class="stat-card"><div class="stat-title">DOM Injections</div><div class="stat-value">${totalInjections}</div><div class="stat-subtitle">Malicious elements injected</div></div>
+                    <div class="stat-card"><div class="stat-title">Critical Alerts</div><div class="stat-value risk-critical">${criticalReports}</div><div class="stat-subtitle">Require immediate attention</div></div>
                 </div>
 
                 <div class="section">
                     <div class="section-title">Report Types Summary</div>
                     <div class="section-content">
                         <table>
-                            <thead>
-                                <tr>
-                                    <th>Type</th>
-                                    <th>Count</th>
-                                    <th>Findings</th>
-                                    <th>Injections</th>
-                                    <th>Critical</th>
-                                    <th>High Risk</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${data.summary.map(s => `
-                                    <tr>
-                                        <td>${s.report_type}</td>
-                                        <td>${s.count}</td>
-                                        <td>${s.total_findings || 0}</td>
-                                        <td>${s.total_injections || 0}</td>
-                                        <td class="risk-critical">${s.critical_reports || 0}</td>
-                                        <td class="risk-high">${s.high_risk_reports || 0}</td>
-                                    </tr>
-                                `).join('')}
-                            </tbody>
+                            <thead><tr><th>Type</th><th>Count</th><th>Findings</th><th>Injections</th><th>Critical</th><th>High Risk</th></tr></thead>
+                            <tbody>${(data.summary || []).map(s => `<tr><td>${s.report_type}</td><td>${s.count}</td><td>${s.total_findings || 0}</td><td>${s.total_injections || 0}</td><td class="risk-critical">${s.critical_reports || 0}</td><td class="risk-high">${s.high_risk_reports || 0}</td></tr>`).join('')}</tbody>
                         </table>
                     </div>
                 </div>
@@ -235,24 +267,8 @@
                     <div class="section-title">Browser Statistics</div>
                     <div class="section-content">
                         <table>
-                            <thead>
-                                <tr>
-                                    <th>Browser</th>
-                                    <th>Version</th>
-                                    <th>Reports</th>
-                                    <th>High Risk</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${data.browsers.map(b => `
-                                    <tr>
-                                        <td>${b.browser || 'Unknown'}</td>
-                                        <td>${b.browser_version || 'Unknown'}</td>
-                                        <td>${b.count}</td>
-                                        <td class="${b.high_risk_count > 0 ? 'risk-high' : ''}">${b.high_risk_count}</td>
-                                    </tr>
-                                `).join('')}
-                            </tbody>
+                            <thead><tr><th>Browser</th><th>Version</th><th>Reports</th><th>High Risk</th></tr></thead>
+                            <tbody>${(data.browsers || []).map(b => `<tr><td>${b.browser || 'Unknown'}</td><td>${b.browser_version || 'Unknown'}</td><td>${b.count}</td><td class="${(b.high_risk_count || 0) > 0 ? 'risk-high' : ''}">${b.high_risk_count || 0}</td></tr>`).join('')}</tbody>
                         </table>
                     </div>
                 </div>
@@ -261,27 +277,20 @@
                     <div class="section-title">Recent High-Risk Reports</div>
                     <div class="section-content">
                         <table>
-                            <thead>
-                                <tr>
-                                    <th>ID</th>
-                                    <th>Type</th>
-                                    <th>Risk</th>
-                                    <th>Client IP</th>
-                                    <th>Browser</th>
-                                    <th>Issues</th>
-                                    <th>Time</th>
-                                </tr>
-                            </thead>
+                            <thead><tr><th>ID</th><th>Type</th><th>Risk</th><th>Client IP</th><th>Page URL</th><th>Browser</th><th>OS</th><th>Issues</th><th>Time</th><th>Actions</th></tr></thead>
                             <tbody>
-                                ${data.high_risk_reports.map(r => `
+                                ${(data.high_risk_reports || []).map(r => `
                                     <tr>
                                         <td>${r.id}</td>
                                         <td>${r.report_type}</td>
                                         <td class="risk-${r.risk_level}">${r.risk_level}</td>
                                         <td>${r.client_ip || 'Unknown'}</td>
+                                        <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis;">${r.page_url || 'N/A'}</td>
                                         <td>${r.browser || 'Unknown'}</td>
+                                        <td>${r.os || 'Unknown'}</td>
                                         <td>${(r.findings_count || 0) + (r.injections_count || 0)}</td>
                                         <td>${new Date(r.at).toLocaleString()}</td>
+                                        <td><button onclick="viewReportDetails('${r.id}')" style="font-size: 12px; padding: 4px 8px;">Details</button></td>
                                     </tr>
                                 `).join('')}
                             </tbody>
@@ -293,20 +302,14 @@
                     <div class="section-title">Client IP Statistics</div>
                     <div class="section-content">
                         <table>
-                            <thead>
-                                <tr>
-                                    <th>Client IP</th>
-                                    <th>Total Reports</th>
-                                    <th>Risk Reports</th>
-                                    <th>Last Seen</th>
-                                </tr>
-                            </thead>
+                            <thead><tr><th>Client IP</th><th>Total Reports</th><th>Risk Reports</th><th>User Agents</th><th>Last Seen</th></tr></thead>
                             <tbody>
-                                ${data.client_statistics.map(c => `
+                                ${(data.client_statistics || []).map(c => `
                                     <tr>
                                         <td>${c.client_ip}</td>
                                         <td>${c.total_reports}</td>
                                         <td class="${c.risk_reports > 0 ? 'risk-high' : ''}">${c.risk_reports}</td>
+                                        <td>${c.user_agents_count || 1}</td>
                                         <td>${new Date(c.last_seen).toLocaleString()}</td>
                                     </tr>
                                 `).join('')}
@@ -317,9 +320,15 @@
 
                 <div class="section">
                     <div class="section-title">IP Address Incident Correlation</div>
+                    <div class="section-content"><div id="ip-correlation-content"><!-- IP correlation data will be loaded here --></div></div>
+                </div>
+
+                <div class="section">
+                    <div class="section-title">File Integrity Issues</div>
                     <div class="section-content">
-                        <div id="ip-correlation-content">
-                            <!-- IP correlation data will be loaded here -->
+                        <div id="file-integrity-content">
+                            <!-- File integrity data will be loaded here -->
+                            <div class="loading">Loading file integrity data...</div>
                         </div>
                     </div>
                 </div>
@@ -328,116 +337,154 @@
 
         async function loadIPCorrelation(tenant, days) {
             try {
-                const response = await fetch(`/ip-correlation/${tenant}?days=${days}`);
-                const data = await response.json();
+                const headers = adminSecret ? { 'x-admin-secret': adminSecret } : {};
                 
+                const response = await fetch(`/ip-correlation/${tenant}?days=${days}`, {
+                    headers: headers
+                });
+                
+                if (response.status === 401) {
+                    return; // Already handled in loadDashboard
+                }
+                
+                const data = await response.json();
                 renderIPCorrelation(data);
             } catch (error) {
-                document.getElementById('ip-correlation-content').innerHTML = `
-                    <p style="color: red;">Error loading IP correlation: ${error.message}</p>
-                `;
+                document.getElementById('ip-correlation-content').innerHTML = `<p style="color: red;">Error loading IP correlation: ${error.message}</p>`;
             }
         }
 
         function renderIPCorrelation(data) {
             const content = document.getElementById('ip-correlation-content');
-            
             if (!data.ip_incidents || data.ip_incidents.length === 0) {
                 content.innerHTML = '<p>No incidents with IP correlation found.</p>';
                 return;
             }
-
             content.innerHTML = `
-                <div style="margin-bottom: 20px;">
-                    <h4>High-Risk IP Addresses</h4>
-                    <table>
-                        <thead>
+                <h4>High-Risk IP Addresses</h4>
+                <table>
+                    <thead><tr><th>IP Address</th><th>Incident Count</th><th>Risk Score</th><th>Attack Types</th><th>First Seen</th><th>Last Seen</th></tr></thead>
+                    <tbody>
+                        ${data.ip_incidents.map(ip => `
                             <tr>
-                                <th>IP Address</th>
-                                <th>Incident Count</th>
-                                <th>Risk Score</th>
-                                <th>Attack Types</th>
-                                <th>First Seen</th>
-                                <th>Last Seen</th>
-                                <th>Actions</th>
+                                <td><strong>${ip.client_ip}</strong></td>
+                                <td>${ip.total_incidents}</td>
+                                <td class="${ip.risk_score >= 8 ? 'risk-critical' : ip.risk_score >= 5 ? 'risk-high' : 'risk-medium'}">${ip.risk_score}/10</td>
+                                <td><div style="font-size: 12px;">${ip.attack_types.map(type => `<span style="background: #e9ecef; padding: 2px 6px; margin: 1px; border-radius: 3px; display: inline-block;">${type}</span>`).join('')}</div></td>
+                                <td>${new Date(ip.first_seen).toLocaleString()}</td>
+                                <td>${new Date(ip.last_seen).toLocaleString()}</td>
                             </tr>
-                        </thead>
-                        <tbody>
-                            ${data.ip_incidents.map(ip => `
-                                <tr>
-                                    <td>
-                                        <strong>${ip.client_ip}</strong>
-                                        ${ip.risk_score >= 8 ? '<span class="risk-critical">🔴</span>' : 
-                                          ip.risk_score >= 5 ? '<span class="risk-high">🟠</span>' : 
-                                          '<span class="risk-medium">🟡</span>'}
-                                    </td>
-                                    <td>${ip.total_incidents}</td>
-                                    <td class="${ip.risk_score >= 8 ? 'risk-critical' : ip.risk_score >= 5 ? 'risk-high' : 'risk-medium'}">
-                                        ${ip.risk_score}/10
-                                    </td>
-                                    <td>
-                                        <div style="font-size: 12px;">
-                                            ${ip.attack_types.map(type => `
-                                                <span style="background: #e9ecef; padding: 2px 6px; margin: 1px; border-radius: 3px; display: inline-block;">
-                                                    ${type}
-                                                </span>
-                                            `).join('')}
-                                        </div>
-                                    </td>
-                                    <td>${new Date(ip.first_seen).toLocaleString()}</td>
-                                    <td>${new Date(ip.last_seen).toLocaleString()}</td>
-                                    <td>
-                                        <button onclick="viewIPDetails('${ip.client_ip}')" style="font-size: 12px; padding: 4px 8px;">
-                                            View Details
-                                        </button>
-                                    </td>
-                                </tr>
-                            `).join('')}
-                        </tbody>
-                    </table>
-                </div>
-
-                <div style="margin-top: 30px;">
-                    <h4>Incident Timeline by IP</h4>
-                    <div id="ip-timeline" style="max-height: 400px; overflow-y: auto; border: 1px solid #dee2e6; padding: 15px;">
-                        ${data.timeline_incidents.map(incident => `
-                            <div style="border-left: 4px solid ${
-                                incident.risk_level === 'critical' ? '#dc3545' :
-                                incident.risk_level === 'high' ? '#fd7e14' :
-                                incident.risk_level === 'medium' ? '#ffc107' : '#28a745'
-                            }; padding: 10px; margin: 5px 0; background: #f8f9fa;">
-                                <div style="display: flex; justify-content: space-between; align-items: center;">
-                                    <span style="font-weight: bold;">${incident.client_ip}</span>
-                                    <span style="font-size: 12px; color: #666;">${new Date(incident.at).toLocaleString()}</span>
-                                </div>
-                                <div style="font-size: 14px; margin: 5px 0;">
-                                    <strong>${incident.report_type}</strong> - ${incident.risk_level} risk
-                                </div>
-                                <div style="font-size: 12px; color: #666;">
-                                    Page: ${incident.page_url || 'Unknown'} | 
-                                    Browser: ${incident.browser || 'Unknown'} | 
-                                    Issues: ${(incident.findings_count || 0) + (incident.injections_count || 0)}
-                                </div>
-                            </div>
                         `).join('')}
-                    </div>
-                </div>
+                    </tbody>
+                </table>`;
+        }
+
+        async function loadFileIntegrity(tenant, days) {
+            try {
+                const headers = adminSecret ? { 'x-admin-secret': adminSecret } : {};
+                
+                const response = await fetch(`/file-integrity/${tenant}?days=${days}`, {
+                    headers: headers
+                });
+                
+                if (response.status === 401) {
+                    return; // Already handled in loadDashboard
+                }
+                
+                const data = await response.json();
+                renderFileIntegrity(data);
+            } catch (error) {
+                document.getElementById('file-integrity-content').innerHTML = `<p style="color: red;">Error loading file integrity data: ${error.message}</p>`;
+            }
+        }
+        
+        function renderFileIntegrity(data) {
+            const content = document.getElementById('file-integrity-content');
+            if (!data.affected_files || data.affected_files.length === 0) {
+                content.innerHTML = '<p>No file integrity issues found.</p>';
+                return;
+            }
+            
+            content.innerHTML = `
+                <h4>Affected Files (${data.total_reports} reports)</h4>
+                <table>
+                    <thead><tr><th>File URL</th><th>Incidents</th><th>Issue Types</th><th>Risk Levels</th></tr></thead>
+                    <tbody>
+                        ${data.affected_files.map(file => `
+                            <tr>
+                                <td><code>${file.url}</code></td>
+                                <td>${file.count}</td>
+                                <td>${file.issues.join(', ')}</td>
+                                <td>${file.risk_levels.map(level => `<span class="risk-${level}">${level}</span>`).join(', ')}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+                
+                <h4>Recent File Integrity Reports</h4>
+                <table>
+                    <thead><tr><th>Time</th><th>Page URL</th><th>Browser</th><th>Findings</th><th>Risk</th></tr></thead>
+                    <tbody>
+                        ${data.recent_reports.map(report => `
+                            <tr>
+                                <td>${new Date(report.at).toLocaleString()}</td>
+                                <td>${report.page_url || 'N/A'}</td>
+                                <td>${report.browser} ${report.browser_version}</td>
+                                <td>${report.findings_count}</td>
+                                <td class="risk-${report.risk_level}">${report.risk_level}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
             `;
         }
 
-        function viewIPDetails(ipAddress) {
-            // Open detailed view for specific IP using the HTML page endpoint
-            const detailsWindow = window.open(`/ip-details-page/${encodeURIComponent(ipAddress)}`, '_blank', 'width=800,height=600');
-            if (!detailsWindow) {
-                alert(`IP Details for ${ipAddress}\n\nUse browser dev tools to view detailed incident reports for this IP address.`);
+        function viewReportDetails(reportId) {
+            const report = fullReportsData[reportId];
+            if (!report) return;
+
+            document.getElementById('modalTitle').innerText = `Report Details: ${reportId}`;
+            const modalBody = document.getElementById('modalBody');
+            
+            modalBody.innerHTML = `
+                <h4>Summary</h4>
+                <p><strong>Time:</strong> ${new Date(report.at).toLocaleString()}</p>
+                <p><strong>Risk:</strong> <span class="risk-${report.risk_level}">${report.risk_level}</span></p>
+                <p><strong>Page URL:</strong> ${report.page_url || 'N/A'}</p>
+                
+                <h4>Client Info</h4>
+                <p><strong>IP Address:</strong> ${report.client_ip || 'Unknown'}</p>
+                <p><strong>Browser:</strong> ${report.browser || 'Unknown'} ${report.browser_version || ''}</p>
+                <p><strong>Operating System:</strong> ${report.os || 'Unknown'}</p>
+                <p><strong>User Agent:</strong> ${report.user_agent || 'N/A'}</p>
+
+                <h4>Integrity Findings (${report.findings_count || 0})</h4>
+                ${(report.findings && report.findings.length > 0) ? `<pre>${JSON.stringify(report.findings, null, 2)}</pre>` : '<p>None</p>'}
+
+                <h4>DOM Injections (${report.injections_count || 0})</h4>
+                ${(report.injections && report.injections.length > 0) ? `<pre>${JSON.stringify(report.injections, null, 2)}</pre>` : '<p>None</p>'}
+
+                <h4>Full Report Data</h4>
+                <pre>${JSON.stringify(report, null, 2)}</pre>
+            `;
+
+            document.getElementById('reportModal').style.display = 'block';
+        }
+
+        function closeModal() {
+            document.getElementById('reportModal').style.display = 'none';
+        }
+
+        window.onclick = function(event) {
+            const modal = document.getElementById('reportModal');
+            if (event.target == modal) {
+                modal.style.display = "none";
             }
         }
 
-        // Load dashboard on page load
         loadDashboard();
-        
-        // Auto-refresh every 30 seconds
-        setInterval(loadDashboard, 30000);
+
     </script>
 </body>
 </html>
+
